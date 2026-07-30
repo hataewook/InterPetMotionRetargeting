@@ -1,0 +1,3 @@
+[submodule "Python/bite_gradio"]
+	path = Python/bite_gradio
+	url = git@hf.co:spaces/runa91/bite_gradio
