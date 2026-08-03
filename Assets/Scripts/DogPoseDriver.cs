@@ -16,7 +16,7 @@ namespace PetDemo
     /// supports Dog_rejoint, P_GermanShepherd, and custom rigs.
     /// </summary>
     [DefaultExecutionOrder(100)]
-    public class DogPoseDriver : MonoBehaviour
+    public class DogPoseDriver : MonoBehaviour, IBodyFrameProvider
     {
         [Header("Clips (switch by changing Clip Index at runtime)")]
         [SerializeField] TextAsset[] clips;
@@ -661,6 +661,25 @@ namespace PetDemo
             Vector3 delta = (captureCenter - dogCenter) *
                             Mathf.Clamp01(bodyPositionWeight);
             dogRoot.position += RootAxisMask.Vector(delta, alignTranslationAxes);
+        }
+
+        /// <summary>The rig root this driver places for root motion.</summary>
+        public Transform BodyRoot => dogRoot != null ? dogRoot : transform;
+
+        /// <summary>Current body frame from the posed trunk: centre = midpoint of
+        /// Throat and TailBase, forward = TailBase -> Throat. Used by
+        /// <see cref="RootMotionAnchor"/> to re-base the root motion.</summary>
+        public bool TryGetBodyFrame(out Vector3 origin, out Vector3 forward)
+        {
+            if (throatBone == null || tailBone == null)
+            {
+                origin = default;
+                forward = default;
+                return false;
+            }
+            origin = (throatBone.position + tailBone.position) * 0.5f;
+            forward = throatBone.position - tailBone.position;
+            return forward.sqrMagnitude > 1e-8f;
         }
 
         void ApplyAims(Vector3[] keypoints)

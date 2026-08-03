@@ -40,7 +40,7 @@ namespace PetDemo
     /// Runs in LateUpdate so it reads the SMAL rig after SmalMotionPlayer has posed
     /// it for the frame. Attach to the target root and assign the SMAL source rig.
     /// </summary>
-    public class SmalRetargeter : MonoBehaviour
+    public class SmalRetargeter : MonoBehaviour, IBodyFrameProvider
     {
         [Header("Source")]
         [Tooltip("Root of the SMAL rig driven by SmalMotionPlayer (contains the SMAL_joint bones).")]
@@ -171,6 +171,7 @@ namespace PetDemo
 
         Vector3[] gizmoTargets;        // end-point goals (green)
         Vector3[] gizmoPoles;          // leg pole hints (yellow)
+        Vector3[] legBendAxis;         // [leg] persistent IK bend axis (pole-based, held near-straight)
 
         // Smoothing / contact: One-Euro filter per source joint (cached per LateUpdate),
         // stance lock per leg, and FK leg-plane normal continuity per leg.
@@ -602,6 +603,8 @@ namespace PetDemo
                 gizmoTargets = new Vector3[gizmoCount];
             if (gizmoPoles == null || gizmoPoles.Length != legs.Length)
                 gizmoPoles = new Vector3[legs.Length];
+            if (legBendAxis == null || legBendAxis.Length != legs.Length)
+                legBendAxis = new Vector3[legs.Length];
 
             Quaternion invSRot = Quaternion.Inverse(sRot);
 
@@ -657,7 +660,8 @@ namespace PetDemo
                     target = footPlanters[i].Filter(
                         target, sFoot, Time.deltaTime,
                         footLockSpeed, footUnlockSpeed, footLockAttack);
-                TwoBoneIK.Solve(legUpper[i], legLower[i], legTip[i], target, pole, ikSoftZone);
+                TwoBoneIK.Solve(legUpper[i], legLower[i], legTip[i], target, pole, ikSoftZone,
+                                ref legBendAxis[i]);
                 LockRoll(legUpper[i], bindLocalUpper[i], rollAxisUpper[i], maxLegRollDegrees);
                 LockRoll(legLower[i], bindLocalLower[i], rollAxisLower[i], maxLegRollDegrees);
                 gizmoTargets[i] = target;
@@ -750,6 +754,28 @@ namespace PetDemo
                 bones[k].rotation = tRot * swing * fkBindRel[i][k];
             }
             gizmoTargets[legs.Length + chains.Length + i] = bones[bones.Length - 1].position;
+        }
+
+        /// <summary>The rig root this component places for root motion (when
+        /// Apply Global Motion is on).</summary>
+        public Transform BodyRoot => targetRoot != null ? targetRoot : transform;
+
+        /// <summary>Current body frame from the posed torso: centre and forward
+        /// (hips -> shoulders) of the target torso frame. Used by
+        /// <see cref="RootMotionAnchor"/> to re-base the root motion.</summary>
+        public bool TryGetBodyFrame(out Vector3 origin, out Vector3 forward)
+        {
+            if (tLsh == null || tRsh == null || tLhip == null || tRhip == null)
+            {
+                origin = default;
+                forward = default;
+                return false;
+            }
+            Vector3 shMid = (tLsh.position + tRsh.position) * 0.5f;
+            Vector3 hipMid = (tLhip.position + tRhip.position) * 0.5f;
+            origin = (shMid + hipMid) * 0.5f;
+            forward = shMid - hipMid;
+            return forward.sqrMagnitude > Eps;
         }
 
         /// <summary>Overlay the target body onto the SMAL body: turn the root so

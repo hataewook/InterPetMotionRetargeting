@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: c0e93e707467f9944b440cf648b3e548
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 9100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 247485
+  packageName: DOG Full Animations - Bull Terrier
+  packageVersion: 1.0
+  assetPath: Assets/Dog_Bullterrier/Animator/BullTerrier_1.controller
+  uploadId: 564116
