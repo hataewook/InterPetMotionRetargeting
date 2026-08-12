@@ -16,7 +16,7 @@ namespace PetDemo
     /// supports Dog_rejoint, P_GermanShepherd, and custom rigs.
     /// </summary>
     [DefaultExecutionOrder(100)]
-    public class DogPoseDriver : MonoBehaviour, IBodyFrameProvider, IGroundable
+    public class DogPoseDriver : MonoBehaviour, IBodyFrameProvider
     {
         [Header("Clips (switch by changing Clip Index at runtime)")]
         [SerializeField] TextAsset[] clips;
@@ -174,7 +174,6 @@ namespace PetDemo
         OneEuroFilterVector3[] keypointFilters;   // [joint] temporal smoothing
         FootPlanter[] footPlanters;                // [leg] stance lock
         Vector3[] prevLegNormal;                   // [leg] FK leg-plane normal continuity
-        Vector3[] lastPole;                        // [leg] this frame's IK pole, for the grounding re-solve
 
         protected void Reset()
         {
@@ -212,9 +211,6 @@ namespace PetDemo
             for (int i = 0; i < footPlanters.Length; i++)
                 footPlanters[i] = new FootPlanter();
             prevLegNormal = new Vector3[legs.Length];
-            lastPole = new Vector3[legs.Length];
-            for (int i = 0; i < legs.Length; i++)
-                lastPole[i] = legs[i].lower.position;   // bind fallback until first solve
         }
 
         /// <summary>Resolve the selected preset against the current rig hierarchy.</summary>
@@ -686,48 +682,6 @@ namespace PetDemo
             return forward.sqrMagnitude > 1e-8f;
         }
 
-        /// <summary>
-        /// <see cref="IGroundable"/>: settle the posed rig onto the ground. Each leg is
-        /// packaged with a closure that re-solves it with this frame's pole and re-applies
-        /// the roll limit; the shared <see cref="FootGrounding"/> logic raycasts the feet,
-        /// moves the body for the common correction and pitches it for the front/hind
-        /// difference, then bends any residual per-foot penetration. Legs 0,1 are front,
-        /// 2,3 are hind (LegKeypoints order). No dependent pose to re-apply afterwards.
-        /// </summary>
-        public void ApplyFootGrounding(FootGroundingSettings settings, FootGroundingState state)
-        {
-            if (legs == null || legs.Length == 0)
-                return;
-            if (!TryGetBodyFrame(out Vector3 origin, out Vector3 forward))
-                return;
-
-            var glegs = new GroundLeg[legs.Length];
-            for (int i = 0; i < legs.Length; i++)
-            {
-                int li = i;   // capture per-leg for the closure
-                glegs[i] = new GroundLeg
-                {
-                    tip = legs[li].end,
-                    isFront = li < 2,
-                    solveToTip = pos =>
-                    {
-                        TwoBoneIK.Solve(legs[li].upper, legs[li].lower, legs[li].end,
-                                        pos, lastPole[li], ikSoftZone);
-                        if (limitIkLegRoll)
-                        {
-                            LimitRoll(legs[li].upper, bindLocalUpper[li],
-                                      rollAxisUpper[li], maxIkLegRollDegrees);
-                            LimitRoll(legs[li].lower, bindLocalLower[li],
-                                      rollAxisLower[li], maxIkLegRollDegrees);
-                        }
-                    },
-                };
-            }
-
-            FootGrounding.Solve(BodyRoot, glegs, Vector3.up, origin, forward,
-                                settings, state, Time.deltaTime);
-        }
-
         void ApplyAims(Vector3[] keypoints)
         {
             if (aimHead)
@@ -822,7 +776,6 @@ namespace PetDemo
                             TwoBoneIK.Solve(leg.upper, leg.lower, leg.end,
                                             plant, leg.lower.position, ikSoftZone);
                     }
-                    lastPole[index] = leg.lower.position;   // grounding re-solve bend hint
                 }
                 else
                 {
@@ -830,7 +783,6 @@ namespace PetDemo
                                    out Vector3 target, out Vector3 pole);
                     pole = Vector3.Lerp(
                         leg.lower.position, pole, PoleWeight(index));
-                    lastPole[index] = pole;   // grounding re-solve reuses this frame's pole
                     if (lockPlantedFeet && footPlanters != null)
                         target = footPlanters[index].Filter(
                             target, keypoints[(int)leg.targetJoint], Time.deltaTime,

@@ -40,7 +40,7 @@ namespace PetDemo
     /// Runs in LateUpdate so it reads the SMAL rig after SmalMotionPlayer has posed
     /// it for the frame. Attach to the target root and assign the SMAL source rig.
     /// </summary>
-    public class SmalRetargeter : MonoBehaviour, IBodyFrameProvider, IGroundable
+    public class SmalRetargeter : MonoBehaviour, IBodyFrameProvider
     {
         [Header("Source")]
         [Tooltip("Root of the SMAL rig driven by SmalMotionPlayer (contains the SMAL_joint bones).")]
@@ -180,11 +180,6 @@ namespace PetDemo
         bool[] smalPosValid;
         FootPlanter[] footPlanters;
         Vector3[] prevLegNormalSmal;
-        // Ground-contact stage (FootGroundingStage) reuse: last leg pole/target and the
-        // last SMAL-frame inverse, cached each LateUpdate so a re-solve can reproduce the
-        // frame's IK and re-run the toe FK after the body tilts.
-        Vector3[] lastPole;
-        Quaternion lastInvSRot = Quaternion.identity;
 
         void Awake()
         {
@@ -264,12 +259,8 @@ namespace PetDemo
             fkCalLower = new Quaternion[legs.Length];
             footPlanters = new FootPlanter[legs.Length];
             prevLegNormalSmal = new Vector3[legs.Length];
-            lastPole = new Vector3[legs.Length];
             for (int i = 0; i < legs.Length; i++)
-            {
                 footPlanters[i] = new FootPlanter();
-                lastPole[i] = legLower[i].position;   // bind fallback until first solve
-            }
             TorsoFrame(SmalPos(SmalRetargetMap.LeftShoulder), SmalPos(SmalRetargetMap.RightShoulder),
                        SmalPos(SmalRetargetMap.LeftHip), SmalPos(SmalRetargetMap.RightHip),
                        out Quaternion sRot0, out _, out _);
@@ -616,7 +607,6 @@ namespace PetDemo
                 legBendAxis = new Vector3[legs.Length];
 
             Quaternion invSRot = Quaternion.Inverse(sRot);
-            lastInvSRot = invSRot;   // for the grounding stage's toe-FK re-run
 
             // Pre-body FK chains (the spine carries the shoulders) are posed first so
             // the torso frame the legs read reflects the bent back.
@@ -650,7 +640,6 @@ namespace PetDemo
                             TwoBoneIK.Solve(legUpper[i], legLower[i], legTip[i],
                                             plantFk, legLower[i].position, ikSoftZone);
                     }
-                    lastPole[i] = legLower[i].position;   // grounding re-solve bend hint
                     gizmoTargets[i] = legTip[i].position;
                     gizmoPoles[i] = legLower[i].position;
                     continue;
@@ -675,7 +664,6 @@ namespace PetDemo
                                 ref legBendAxis[i]);
                 LockRoll(legUpper[i], bindLocalUpper[i], rollAxisUpper[i], maxLegRollDegrees);
                 LockRoll(legLower[i], bindLocalLower[i], rollAxisLower[i], maxLegRollDegrees);
-                lastPole[i] = pole;   // grounding re-solve reuses this frame's pole
                 gizmoTargets[i] = target;
                 gizmoPoles[i] = pole;
             }
@@ -683,7 +671,17 @@ namespace PetDemo
             // Toe FK: after the IK (or FK) has posed each leg, orient the optional toe
             // bone to follow the SMAL paw->toe direction. The toe is a leaf, so setting
             // its world rotation does not disturb the planted paw.
-            SolveToeFk(invSRot, tRot);
+            for (int i = 0; i < legs.Length; i++)
+            {
+                if (legToe[i] == null)
+                    continue;
+                Vector3 segDir = SmalPos(legs[i].toeJoint) - SmalPos(legs[i].targetJoint);
+                if (segDir.sqrMagnitude < Eps)
+                    continue;
+                Vector3 curDir = (invSRot * segDir).normalized;
+                Quaternion swing = Quaternion.FromToRotation(toeRefDir[i], curDir);
+                legToe[i].rotation = tRot * swing * toeBindRel[i];
+            }
 
             for (int i = 0; i < chains.Length; i++)
             {
@@ -710,79 +708,6 @@ namespace PetDemo
             // per-axis remap. Local rotation, so it is independent of the head's pose.
             for (int i = 0; i < copyRotations.Length; i++)
                 SolveCopyRotation(i);
-        }
-
-        /// <summary>Orient each optional toe/paw leaf bone to follow its SMAL paw->toe
-        /// segment through the target torso frame. Extracted so the grounding stage can
-        /// re-run it after the legs (and the body) have moved.</summary>
-        void SolveToeFk(Quaternion invSRot, Quaternion tRot)
-        {
-            for (int i = 0; i < legs.Length; i++)
-            {
-                if (legToe[i] == null)
-                    continue;
-                Vector3 segDir = SmalPos(legs[i].toeJoint) - SmalPos(legs[i].targetJoint);
-                if (segDir.sqrMagnitude < Eps)
-                    continue;
-                Vector3 curDir = (invSRot * segDir).normalized;
-                Quaternion swing = Quaternion.FromToRotation(toeRefDir[i], curDir);
-                legToe[i].rotation = tRot * swing * toeBindRel[i];
-            }
-        }
-
-        /// <summary>True if a leg is a front (fore) leg, from its mapping name. Falls
-        /// back to the first half of the array being front when the name is ambiguous
-        /// (default order is L/R front then L/R back).</summary>
-        bool IsFrontLeg(int i)
-        {
-            string n = legs[i].name != null ? legs[i].name.ToLowerInvariant() : string.Empty;
-            if (n.Contains("front") || n.Contains("fore"))
-                return true;
-            if (n.Contains("back") || n.Contains("hind") || n.Contains("rear"))
-                return false;
-            return i < legs.Length / 2;
-        }
-
-        /// <summary>
-        /// <see cref="IGroundable"/>: settle the posed rig onto the ground. Builds a
-        /// <see cref="GroundLeg"/> per leg — each with a closure that re-solves that leg
-        /// with this frame's pole/bend-axis and re-locks its roll — hands them to the
-        /// shared <see cref="FootGrounding"/> logic, then re-runs the toe FK against the
-        /// torso frame re-measured after any body pitch.
-        /// </summary>
-        public void ApplyFootGrounding(FootGroundingSettings settings, FootGroundingState state)
-        {
-            if (legTip == null || legTip.Length == 0)
-                return;
-            if (!TryGetBodyFrame(out Vector3 origin, out Vector3 forward))
-                return;
-
-            var glegs = new GroundLeg[legs.Length];
-            for (int i = 0; i < legs.Length; i++)
-            {
-                int li = i;   // capture per-leg for the closure
-                glegs[i] = new GroundLeg
-                {
-                    tip = legTip[li],
-                    isFront = IsFrontLeg(li),
-                    solveToTip = pos =>
-                    {
-                        TwoBoneIK.Solve(legUpper[li], legLower[li], legTip[li],
-                                        pos, lastPole[li], ikSoftZone, ref legBendAxis[li]);
-                        LockRoll(legUpper[li], bindLocalUpper[li], rollAxisUpper[li], maxLegRollDegrees);
-                        LockRoll(legLower[li], bindLocalLower[li], rollAxisLower[li], maxLegRollDegrees);
-                    },
-                };
-            }
-
-            FootGrounding.Solve(targetRoot, glegs, Vector3.up, origin, forward,
-                                settings, state, Time.deltaTime);
-
-            // The body may have pitched, so re-measure the torso frame before re-running
-            // the toe FK on the corrected legs.
-            TorsoFrame(tLsh.position, tRsh.position, tLhip.position, tRhip.position,
-                       out Quaternion tRot, out _, out _);
-            SolveToeFk(lastInvSRot, tRot);
         }
 
         /// <summary>Copy one SMAL joint's local articulation onto its target bone: take

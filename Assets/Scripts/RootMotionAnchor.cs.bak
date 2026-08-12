@@ -43,24 +43,13 @@ namespace PetDemo
         [SerializeField] Transform anchor;
 
         [Tooltip("Lift the captured motion so its ground (y = 0) sits at the anchor's " +
-                 "height. Off: keep the captured world Y unchanged (align X/Z only).\n" +
-                 "With a FootGroundingStage this is just the COARSE vertical baseline — " +
-                 "grounding still does the fine ground contact on top (it runs after). " +
-                 "Keep ON with the anchor at floor level so a floating capture is dropped " +
-                 "near the ground first; the anchor's Y offset is a fixed baseline, not a " +
-                 "per-frame fight. Turn OFF only to let grounding own all vertical (then " +
-                 "the capture must already sit near the ground, or enable pull-down).")]
+                 "height. Off: keep the captured world Y unchanged (align X/Z only).")]
         [SerializeField] bool matchAnchorHeight = true;
 
         [Tooltip("Draw the anchor position and facing in the Scene view.")]
         [SerializeField] bool drawGizmos = true;
 
         const float Eps = 1e-8f;
-
-        /// <summary>The floor/anchor transform this re-bases onto. Exposed so a
-        /// <see cref="FootGroundingStage"/> on the same object can take its fixed ground
-        /// plane height from the same anchor (single source of truth for "the floor").</summary>
-        public Transform GroundAnchor => anchor;
 
         IBodyFrameProvider provider;
         bool calibrated;
